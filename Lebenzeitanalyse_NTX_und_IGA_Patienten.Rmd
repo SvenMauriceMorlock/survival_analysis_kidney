@@ -38,9 +38,16 @@ Der zugrunde liegende Datensatz besteht aus 2 Excel Dateien, von denen jeweils e
 Arbeitsblatt die interessierenden Daten enthält. Um das den Einlesevorgang zu
 vereinfachen wurden die Arbeitsmappen als csv Datei exportiert.
 ```{r, echo = TRUE}
-path1 <- "~/06_data/iga_sheet2.csv"
-path2 <- "~/06_data/ntx.csv" 
-path3 <- "~/06_data/IgA_sheet_1.csv"
+if(Sys.info()["user"] == "svenm"){
+  path1 <- "~/06_data/iga_sheet2.csv"
+  path2 <- "~/06_data/ntx.csv" 
+  path3 <- "~/06_data/IgA_sheet_1.csv"
+}else if(Sys.info()["user"] == "bitteaendern"){
+  path1 <- "/Users/bitteaendern/01_data/iga_sheet2.csv"
+  path2 <- "/Users/bitteaendern/01_data/ntx.csv" 
+  path3 <- "/Users/bitteaendern/01_data/IgA_sheet_1.csv"
+}
+
 ```
 
 ```{r}
