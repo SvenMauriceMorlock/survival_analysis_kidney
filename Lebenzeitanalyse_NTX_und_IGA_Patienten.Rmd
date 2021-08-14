@@ -1,0 +1,416 @@
+---
+title: "Explorative Datenanalyse IGA und NTX Patienten"
+author: "Morlock, Sven; Morlock, Alina"
+date: "5/30/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warnings = FALSE)
+```
+
+## Vorabinfo
+R-Version:        
+```{r}
+R.version
+```
+R-Studio Version: 
+```{r}
+rstudioapi::versionInfo()
+```
+
+
+Die folgenden Packete wurden von [CRAN]{https://cran.r-project.org/} verwendet 
+und müssen nach Bedarf zuvor mit dem Befehl install.packages("<Packetname>") installiert werden.
+```{r, messages = FALSE, warnings = FALSE, echo = TRUE}
+library(survival)
+library(survminer)
+library(readr)
+library(lubridate)
+library(data.table)
+library(tidyverse)
+library(zoo)
+```
+\newpage
+Der zugrunde liegende Datensatz besteht aus 2 Excel Dateien, von denen jeweils ein
+Arbeitsblatt die interessierenden Daten enthält. Um das den Einlesevorgang zu
+vereinfachen wurden die Arbeitsmappen als csv Datei exportiert.
+```{r, echo = TRUE}
+path1 <- "~/06_data/iga_sheet2.csv"
+path2 <- "~/06_data/ntx.csv" 
+path3 <- "~/06_data/IgA_sheet_1.csv"
+```
+
+```{r}
+tmp_data <- fread(path3, na.strings = "")
+tmp_columns <- c("last-name", "first-name", "Date last seen")
+tmp_data <- tmp_data[, ..tmp_columns]
+tmp_names <- c("last-name", "first-name", "date_last_seen")
+colnames(tmp_data) <- tmp_names
+tmp_data$date_last_seen <- ymd(dmy(tmp_data$date_last_seen))
+```
+
+```{r, echo = TRUE}
+# Datenaufbereitung IGA Patienten
+daten_iga <- fread(path1,
+                   colClasses = c("graft loss (0=functial, 1=loss)" = "factor",
+                                  "Pat death (0=alive, 1= dead)" =  "factor",
+                                  "biopsy proven recurrence (0=no, 1=yes)" = "factor",
+                                  "D-type" = "factor",
+                                  "D-age" = "numeric",
+                                  "D-abo" = "factor",
+                                  "D-sex" = "factor",
+                                  "R-abo" = "factor",
+                                  "R Full Phenotype" = "factor",
+                                  "D-pheno" = "factor",
+                                  "Cold ischaemic period hours" = "numeric",
+                                  "Cold ischaemic period minutes" = "numeric",
+                                  "mm-B" = "factor",
+                                  "mm-DR" = "factor",
+                                  "Current PRA%" = "numeric",
+                                  "Highest PRA%" = "numeric"
+                                  ), na.strings = "")
+names_date_type <- c("Date of birth",
+                      "T-date", "Todesdatum")
+daten_iga[, (names_date_type) := lapply(.SD, function(x){ymd(dmy(x))}), .SDcols = names_date_type]
+#### Teilnehmer unter 18 Jahren zur Zeit der Operation entfernen  
+daten_iga <- daten_iga[(daten_iga$`T-date` - daten_iga$`Date of birth`) >= 18 * 365, ]
+# Daten aus Sheet 1 hinzufügen
+daten_iga <- data.table::merge.data.table(daten_iga,tmp_data, by = c("last-name", "first-name"), all.y = FALSE)
+# Namen nicht relevant
+daten_iga <- daten_iga[,-c(1,2)] 
+names(daten_iga) <- c(
+              "graft_loss", "graft_loss_date", "max_FUP_graft", "death", 
+              "death_date", "max_FUP_surv", "biopsy_proven_recurrence",
+              "date_of_birth", "T_date","D_type", "D_age", "D_abo", "D_sex",
+              "R_abo", "R_full_phenotype", "D_pheno","cold_ischaemic_period_h", 
+              "cold_ischaemic_period_m", "mm_B", "mm_DR", "current_PRA", 
+              "highest_PRA", "date_last_seen")
+daten_iga <- cbind(daten_iga,daten_iga$T_date + years(10))
+names(daten_iga)[length(names(daten_iga))] <- "follow_up"
+daten_iga$max_FUP_graft <- as.numeric(gsub(",",".",daten_iga$max_FUP_graft))
+daten_iga$max_FUP_surv <- as.numeric(gsub(",",".",daten_iga$max_FUP_surv))
+daten_iga_0 <- daten_iga[biopsy_proven_recurrence == 0]
+daten_iga_1 <- daten_iga[biopsy_proven_recurrence == 1]
+```
+
+```{r, echo = TRUE}
+# Datenaufbereitung NTX Patienten
+daten_ntx <- fread(path2, colClasses = c("Patienten Status[NTX PatientenInformation]" = "factor",
+                                         "TX Status[NTX PatientenInformation]" = "factor",
+                                         "Geschlecht" = "factor",
+                                         "Bezeichnung" = "factor"),na.strings = "")
+colnames_ntx <- c("Datum", "Bezeichnung", "Patienten_ID", "Familienname", "Vorname", "Geburtsdatum",
+                  "Geschlecht", "NTXNR", "TX_FU_Ende_Liv1",
+                  "T_Ende_1", "T_Ende_2", "T_Ende_3", "T_Ende_4", "T_Ende_5", "T_Ende_6",
+                  "TX_Status", "P_Status", "Last_Seen", "Todesdatum")
+colnames(daten_ntx) <- colnames_ntx
+
+#### Factor levels 
+daten_ntx$TX_Status<-  fct_collapse(daten_ntx$TX_Status,
+             "mit" = c("1 - mit Transplantatfunktion"),
+             "ohne" = c("2 - ohne Transplantatfunktion", "2- ohne Transplantatfunktion"))
+daten_ntx$P_Status <- fct_collapse(daten_ntx$P_Status,
+             "lebt" = c("1 - lebt"),
+             "verstorben" = c("2 - verstorben"))
+levels(daten_ntx$Geschlecht) <- c("m", "w")
+#### Uhrzeiten aus Datum Variable entfernen
+daten_ntx[, ("Datum") := lapply(.SD, function(x){substr(x, 1, 10)}), .SDcols = "Datum"]
+
+#### Zeit/Datum Datentyp erstellen
+namen_ntx_sheet1 <- c("Datum", "Geburtsdatum",
+                      "T_Ende_1",
+                      "T_Ende_2",
+                      "T_Ende_3",
+                      "T_Ende_4",
+                      "T_Ende_5",
+                      "T_Ende_6",
+                      "Last_Seen", 
+                      "Todesdatum")
+daten_ntx[, (namen_ntx_sheet1) := lapply(.SD, function(x){ymd(dmy(x))}), .SDcols = namen_ntx_sheet1]
+#### Teilnehmer unter 18 Jahren zur Zeit der Operation entfernen  
+daten_ntx <- daten_ntx[interval(daten_ntx$Geburtsdatum, daten_ntx$Datum) / years(1) >= 18, ]
+
+# follow_up time
+daten_ntx <- cbind(daten_ntx, 
+                   daten_ntx$Datum + years(10)
+                   )
+names(daten_ntx)[length(names(daten_ntx))] <- "follow_up"
+# Irrelevante Spalten löschen
+daten_ntx$Patienten_ID <- NULL
+daten_ntx$Familienname <- NULL
+daten_ntx$Vorname <- NULL
+daten_ntx$Bezeichnung <- NULL
+daten_ntx$TX_Status <- relevel(daten_ntx$TX_Status, ref = "ohne")
+# T_Ende_x können in eine Variable subsumiert werden, weil jeder Patient
+# innerhalb des follow-up, wenn er ein Transplantatverlust hatte, genau ein 
+# Transplantat verlor.
+daten_ntx <- daten_ntx %>% 
+  mutate(Transplantatversagen = case_when(
+    !is.na(daten_ntx$T_Ende_1) ~ daten_ntx$T_Ende_1,
+    !is.na(daten_ntx$T_Ende_2) ~ daten_ntx$T_Ende_2,
+    !is.na(daten_ntx$T_Ende_3) ~ daten_ntx$T_Ende_3,
+    !is.na(daten_ntx$T_Ende_4) ~ daten_ntx$T_Ende_4,
+    !is.na(daten_ntx$T_Ende_5) ~ daten_ntx$T_Ende_5,
+    !is.na(daten_ntx$T_Ende_6) ~ daten_ntx$T_Ende_6
+    
+  ))
+daten_ntx$T_Ende_1 <- NULL
+daten_ntx$T_Ende_2 <- NULL
+daten_ntx$T_Ende_3 <- NULL
+daten_ntx$T_Ende_4 <- NULL
+daten_ntx$T_Ende_5 <- NULL
+daten_ntx$T_Ende_6 <- NULL
+```
+
+```{r}
+# remove all tmp_* data and variables
+rm(list = ls()[grep(pattern = "tmp_[\\w\\W]*", ls())])
+rm(list = ls()[grep(pattern = "path[\\w\\W]*", ls())])
+rm(list = ls()[grep(pattern = "names[\\w\\W]*", ls())])
+rm(list = ls()[grep(pattern = "colnames[\\w\\W]*", ls())])
+rm(list = ls()[grep(pattern = "namen[\\w\\W]*", ls())])
+# save data as R
+
+```
+
+\newpage
+## 1. Deskriptive Statistik
+```{r, echo = TRUE}
+ggplot() +
+  ########################################### NTX ##############################
+  geom_density(daten_ntx, mapping =  aes(as.numeric(difftime(daten_ntx$Datum,
+              daten_ntx$Geburtsdatum, units = "days") / 365.25 ), color = "NTX"), 
+              alpha = 0.3, key_glyph = draw_key_path)  +
+  geom_vline(xintercept = median(as.numeric(difftime(daten_ntx$Datum, 
+  daten_ntx$Geburtsdatum, units = "days") / 365.25 )), 
+  linetype  = "solid", color = "blue" ) + 
+  ########################################### IGA 0 ############################
+  geom_density(daten_iga_0, mapping = aes(as.numeric(difftime(daten_iga_0$T_date,
+  daten_iga_0$date_of_birth, units = "days") / 365.25), color = "IGA_0",),
+  alpha = 0.3,key_glyph = draw_key_path) +
+  geom_vline(xintercept = median(as.numeric(difftime(daten_iga_0$T_date, 
+  daten_iga_0$date_of_birth, units = "days") / 365.25)), linetype  = "solid",
+  color = "red" ) +
+  ############################################ IGA 1 ###########################
+  geom_density(daten_iga_1, mapping = aes(as.numeric(difftime(daten_iga_1$T_date, 
+  daten_iga_1$date_of_birth, units = "days") / 365.25), color = "IGA_1"),
+  alpha = 0.3,key_glyph = draw_key_path) + 
+  geom_vline(xintercept = median(as.numeric(difftime(daten_iga_1$T_date,
+  daten_iga_1$date_of_birth, units = "days") / 365.25)), linetype  = "solid", 
+  color = "green") + 
+  ###############################################################################
+  geom_density(daten_iga, mapping = aes(as.numeric(difftime(daten_iga$T_date, 
+  daten_iga$date_of_birth, units = "days") / 365.25)), color = "black",
+  linetype = "dashed") +
+  geom_vline(xintercept = median((as.numeric(difftime(daten_iga$T_date, 
+  daten_iga$date_of_birth, units = "days") / 365.25))), linetype = "dashed", 
+  color = "black") + 
+  xlab("Alter") +
+  ylab("Dichte") + 
+  ggtitle("Kerndichteschätzung Patientenalter", 
+  subtitle = "mit Median-Alter der jew. Gruppe \n(0/1 =ohne/mit recurrence), schwarz gestrichelt = IGA Patienten gesamt,  ") +
+  labs(color = "Patienten Gruppe") +
+  theme_classic() +
+  guides(colour = guide_legend(override.aes = list(size = 10)))
+  
+
+```
+Die Altersverteilung der NTX Patienten ist rechtsschief, während für IGA Patienten die Alterverteilung mehr einen linksschiefen Charakter hat. Insbesondere ist auffallend, dass IGA Patienten die einer wiederholten Biopsie bedurfen im unteren Bereich der Altersverteilung liegen. In Übereinstimmung dazu liegt das mediane Alter dieser Gruppe auch deutlich unter dem Medianalter der IGA Gruppe ohne wiederholte Biopsie (rote vertikale Linie), dass wiederum nahe am medianen Alter der gesamten IGA Gruppe liegt (gestrichelte Linie).
+
+```{r}
+Alter_iga_0 <- as.numeric(difftime(daten_iga_0$`T-date`, 
+                                   daten_iga_0$`Date of birth`, 
+                                   units = "days") / 365.25)
+Alter_iga_1 <- as.numeric(difftime(daten_iga_1$`T-date`, 
+                                   daten_iga_1$`Date of birth`, 
+                                   units = "days") / 365.25)
+Alter_ntx <- as.numeric(difftime(daten_ntx$Datum,  
+                                 daten_ntx$Geburtsdatum, 
+                                 units = "days") / 365.25 )
+```
+
+```{r, echo = TRUE,fig.show = "hold", out.width = "50%"}
+# Alter NTX (Patienten)
+par(mfrow = c(1,2))
+ggplot(data = daten_ntx) +
+  geom_boxplot(mapping = aes(y = as.numeric(difftime(daten_ntx$Datum, 
+                                                     daten_ntx$Geburtsdatum, 
+                                                     units = "days") / 365.25),
+                             x = daten_ntx$Geschlecht)) +
+  xlab("Geschlecht") +
+  ylab("Alter" ) +
+  ggtitle("Boxplot: Alter nach Geschlecht, NTX Patienten") +
+  theme_minimal()
+
+ggplot(data = daten_ntx) +
+  geom_violin(mapping = aes(as.numeric(difftime(daten_ntx$Datum, 
+                                                daten_ntx$Geburtsdatum, 
+                                                units = "days") / 365.25),
+                            x = daten_ntx$Geschlecht)) +
+  xlab("Geschlecht") +
+  ylab("Alter") +
+  ggtitle("Violinplot: Alter nach Geschlecht, NTX Patienten") +
+  theme_minimal()
+```
+
+
+```{r, echo = TRUE}
+# Alter IGA (Patienten)
+ggplot(Data = daten_iga) + 
+  geom_boxplot(mapping = aes(y = as.numeric(difftime(daten_iga$T_date,
+                                                     daten_iga$date_of_birth,
+                                                     units = "days") / 365.25)
+                             )) +
+  ylab("Alter") +
+  theme_minimal() +
+  ggtitle("Boxplot: Alter der NTX Patienten") +
+  theme(axis.ticks.x = element_blank(), axis.text.x=element_blank())
+
+```
+
+```{r, echo = TRUE}
+# Transplantatüberleben NTX
+daten_ntx %>% 
+  mutate(transplantatverlsut = as.factor(case_when(
+    !is.na(daten_ntx$T_Ende) ~ 0,
+     is.na(daten_ntx$T_Ende) ~ 1
+  ))) %>% 
+  ggplot(aes(x = transplantatverlsut, fill = Geschlecht )) + 
+  geom_bar(stat = "count",position = position_dodge() ) +
+  ggtitle("Balkendiagram: Transplantatverlust NTX Patienten",
+          subtitle = "(1 entspricht Transplantatverlust)") +
+  theme_minimal() + 
+  ylab("Anzahl") +
+  xlab("")
+
+```
+
+```{r, fig.show = "hold", out.width = "50%", echo = TRUE}
+par(mfrow = c(1,2))
+#Transplantatüberleben IGA Patienten
+daten_iga_0 %>% 
+  ggplot(aes(x = graft_loss, fill = graft_loss)) +
+           geom_bar(stat = "count") +
+  theme_minimal() +
+  ggtitle("Barplot: Transplantatverlust IGA_0") +
+  ylab("Anzahl") +
+  xlab("")
+
+daten_iga_1 %>% 
+  ggplot(aes(x = graft_loss, fill = graft_loss)) +
+           geom_bar(stat = "count") +
+  theme_minimal() +
+  ggtitle("Barplot: Transplantatverlust IGA_1") +
+  ylab("Anzahl") +
+  xlab("")
+```
+
+```{r, echo = TRUE,fig.show = "hold", out.width = "50%",warnings = FALSE}
+# Durchschnittliches Transplantatüberleben NTX
+par(mfrow = c(1,2))
+daten_ntx %>% 
+  mutate(
+    T_Ende = case_when(
+      !is.na(T_Ende) & T_Ende > follow_up ~ follow_up,
+      !is.na(T_Ende) & T_Ende <= follow_up ~ T_Ende,
+      is.na(T_Ende) ~ follow_up
+    )) %>% 
+  ggplot() +
+  geom_boxplot(aes(y = as.numeric(difftime(T_Ende,
+                                           Datum), units = "days") / 365.25,
+                   x = daten_ntx$Geschlecht)) +
+    ylab("Zeit bis Transplantatversagen") +
+    ggtitle("Zeitverlauf Transplantatversagen NTX Patienten",
+            subtitle = "wenn kein Transplantatversagen, dann Follow-Up Datum") +
+  theme_minimal()
+
+daten_ntx %>% 
+  filter(!is.na(T_Ende) & (T_Ende < follow_up) ) 
+  ggplot() +
+    geom_boxplot(aes(y = as.numeric(difftime(daten_ntx$T_Ende,daten_ntx$Datum), units = "days") / 365.25,
+                     x = daten_ntx$Geschlecht)) +
+    ylab("Zeit bis Transplantatversagen") +
+    xlab("Geschlecht")+ 
+    ggtitle("Zeitverlauf Transplantatversagen NTX Patienten",
+            subtitle = "nur wenn tatsächlich eingetreten") +
+    theme_minimal()
+
+```
+
+```{r,,fig.show = "hold", out.width = "50%",warnings = FALSE}
+# Weitere Grafiken IGA Patienten
+par(mfrow = c(3,2))
+daten_iga %>% 
+  ggplot(aes(y = D_age, x = graft_loss)) +
+  geom_boxplot() +
+  ggtitle("Boxplot: Spender Alter und Graft Loss") +
+  ylab("Alter") +
+  xlab("Graft Loss") +
+  theme_minimal()
+
+daten_iga %>% 
+  ggplot(aes(x = graft_loss, fill = D_sex)) +
+  geom_bar(stat = "count",position = position_dodge() ) +
+  ggtitle("Balkendiagram: Spender-Geschlecht und Graft Loss") +
+  ylab("Anzahl") +
+  xlab("Graft Loss") +
+  theme_minimal()
+
+daten_iga %>% 
+  ggplot(aes(y = daten_iga$cold_ischaemic_period_h, x = graft_loss)) +
+  geom_boxplot() +
+  theme_minimal() +
+  ggtitle("Boxplot: Kalte ischämiezeit") +
+  ylab("Kalte Ischämiezeit ") +
+  xlab("Graft Loss")
+
+```
+<!-- ## 2. Survivalanalyse -->
+
+<!-- ### 2.1  Survivalanalyse NTX Patienten -->
+```{r,eval = FALSE}
+# Zeitraum: Follow-Up
+# Event:    TX_Status
+# Zensur DateLastSeen (<= follow-up) ODER Tod
+
+```
+
+
+```{r, eval = FALSE}
+
+
+```
+
+```{r, eval = FALSE}
+# Zeitraum: Follow-Up
+# Event:    TX_Status
+# Zensur DateLastSeen (<= follow-up) ODER Tod
+
+```
+
+```{r,eval = FALSE}
+# Zeitraum Follow-Up
+# Event Tod UND graft-loss
+# Zensur: DateLastSeen (<= follow-up)
+
+```
+
+```{r,eval = FALSE}
+# Zeitraum Follow-Up
+# Event:  Tod
+# Zensur  DateLastSeen (<= follow-up)
+
+```
+
+<!-- ### 2.2 Survivalanalyse IGA Patienten -->
+
+```{r,eval = FALSE}
+# IGA mit Recurrence
+# Zeitraum Follow-Up
+# Event: TX_Status
+# Zensur: date last seen oder Tod(death_date)
+
+```
