@@ -180,7 +180,11 @@ rm(list = ls()[grep(pattern = "names[\\w\\W]*", ls())])
 rm(list = ls()[grep(pattern = "colnames[\\w\\W]*", ls())])
 rm(list = ls()[grep(pattern = "namen[\\w\\W]*", ls())])
 # save data as R
-
+if( Sys.info()["user"] == "svenm"){
+  fwrite(daten_ntx, file = "C:\\Users\\svenm\\Documents\\06_data\\daten_ntx.csv")
+} else if(Sys.info()["user"] == "bitteaendern"){
+  fwrite(daten_ntx, file = "/Users/bitteaendern/01_data/daten_ntx.csv")
+}
 ```
 
 \newpage
@@ -382,7 +386,12 @@ daten_iga %>%
 # Zeitraum: Follow-Up
 # Event:    TX_Status
 # Zensur DateLastSeen (<= follow-up) ODER Tod
+data_tmp <- daten_ntx[!is.na(Transplantatversagen)]
 
+survfit(formula = Surv(time = as.numeric(daten_ntx$follow_up), 
+                       event = daten_ntx$Transplantatversagen) ~ 1, data = data_tmp)#
+  ggsurvplot(data = data_tmp)
+  
 ```
 
 
