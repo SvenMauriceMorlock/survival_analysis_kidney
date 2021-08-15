@@ -282,8 +282,8 @@ ggplot(Data = daten_iga) +
 # Transplantatüberleben NTX
 daten_ntx %>% 
   mutate(transplantatverlsut = as.factor(case_when(
-    !is.na(daten_ntx$T_Ende) ~ 0,
-     is.na(daten_ntx$T_Ende) ~ 1
+    !is.na(daten_ntx$Transplantatversagen) ~ 0,
+     is.na(daten_ntx$Transplantatversagen) ~ 1
   ))) %>% 
   ggplot(aes(x = transplantatverlsut, fill = Geschlecht )) + 
   geom_bar(stat = "count",position = position_dodge() ) +
@@ -321,9 +321,9 @@ par(mfrow = c(1,2))
 daten_ntx %>% 
   mutate(
     T_Ende = case_when(
-      !is.na(T_Ende) & T_Ende > follow_up ~ follow_up,
-      !is.na(T_Ende) & T_Ende <= follow_up ~ T_Ende,
-      is.na(T_Ende) ~ follow_up
+      !is.na(Transplantatversagen) & Transplantatversagen > follow_up ~ follow_up,
+      !is.na(Transplantatversagen) & Transplantatversagen <= follow_up ~ Transplantatversagen,
+      is.na(Transplantatversagen) ~ follow_up
     )) %>% 
   ggplot() +
   geom_boxplot(aes(y = as.numeric(difftime(T_Ende,
@@ -335,9 +335,9 @@ daten_ntx %>%
   theme_minimal()
 
 daten_ntx %>% 
-  filter(!is.na(T_Ende) & (T_Ende < follow_up) ) 
+  filter(!is.na(Transplantatversagen) & (Transplantatversagen < follow_up) ) 
   ggplot() +
-    geom_boxplot(aes(y = as.numeric(difftime(daten_ntx$T_Ende,daten_ntx$Datum), units = "days") / 365.25,
+    geom_boxplot(aes(y = as.numeric(difftime(daten_ntx$Transplantatversagen,daten_ntx$Datum), units = "days") / 365.25,
                      x = daten_ntx$Geschlecht)) +
     ylab("Zeit bis Transplantatversagen") +
     xlab("Geschlecht")+ 
